@@ -11,9 +11,9 @@ def reachability_with_constraints(
         finite_automaton.func_to_steps.keys()
         & constraints_automaton.func_to_steps.keys()
     )
-    constraints_height, automaton_height = len(constraints_automaton.map_index_to_state), len(
-        finite_automaton.map_index_to_state
-    )
+    constraints_height, automaton_height = len(
+        constraints_automaton.map_index_to_state
+    ), len(finite_automaton.map_index_to_state)
 
     for label in common_labels:
         constraints_matrix = constraints_automaton.func_to_steps[label]
@@ -23,7 +23,9 @@ def reachability_with_constraints(
     height = constraints_height
     width = constraints_height + automaton_height
 
-    reachable_states = {state.value: set() for state in finite_automaton.map_index_to_state}
+    reachable_states = {
+        state.value: set() for state in finite_automaton.map_index_to_state
+    }
 
     def diagonalize_matrix(matrix):
         height = matrix.shape[0]
