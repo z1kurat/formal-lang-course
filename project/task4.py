@@ -58,6 +58,7 @@ def reachability_with_constraints(
                             j in finite_automaton.final_states
                             and frontier[i, j + constraints_height]
                         ):
+                            
                             reachable_states[
                                 finite_automaton.map_index_to_state[start_state]
                             ].add(finite_automaton.map_index_to_state[j])
