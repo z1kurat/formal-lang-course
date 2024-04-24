@@ -1,6 +1,7 @@
 from networkx import MultiDiGraph
 
 from pyparsing import Set
+from pyformlang.finite_automaton import *
 
 from pyformlang.finite_automaton import (
     DeterministicFiniteAutomaton,
@@ -10,25 +11,27 @@ from pyformlang.regular_expression import Regex
 
 
 def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
-    return Regex(regex=regex).to_epsilon_nfa().minimize()
+    return Regex(regex).to_epsilon_nfa().to_deterministic().minimize()
 
 
 def graph_to_nfa(
     graph: MultiDiGraph, start_states: Set[int], final_states: Set[int]
 ) -> NondeterministicFiniteAutomaton:
-    nfa: NondeterministicFiniteAutomaton = NondeterministicFiniteAutomaton()
+    nfa = NondeterministicFiniteAutomaton()
 
-    states = set(graph.nodes())
+    if not start_states:
+        for n in graph.nodes():
+            start_states.add(n)
+    if not final_states:
+        for n in graph.nodes():
+            final_states.add(n)
 
-    final_states = final_states if final_states else states
-    start_states = start_states if start_states else states
+    for state in start_states:
+        nfa.add_start_state(State(state))
+    for state in final_states:
+        nfa.add_final_state(State(state))
 
-    for final_state in final_states:
-        nfa.add_final_state(final_state)
-
-    for start_state in start_states:
-        nfa.add_start_state(start_state)
-
-    nfa.add_transitions([(f, l, t) for f, t, l in graph.edges(data="label")])
-
+    for u, v, label in graph.edges(data="label"):
+        nfa.add_transition(u, label, v)
     return nfa
+
