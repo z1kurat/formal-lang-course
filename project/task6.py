@@ -7,7 +7,9 @@ import networkx as nx
 
 def cfg_to_weak_normal_form(cfg: CFG) -> CFG:
     cfg_update = cfg.eliminate_unit_productions().remove_useless_symbols()
-    new_prod = cfg_update._decompose_productions(cfg_update._get_productions_with_only_single_terminals())
+    new_prod = cfg_update._decompose_productions(
+        cfg_update._get_productions_with_only_single_terminals()
+    )
     return CFG(start_symbol=cfg_update.start_symbol, productions=new_prod)
 
 
