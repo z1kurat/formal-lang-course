@@ -1,158 +1,93 @@
+import pyformlang
 from pyformlang.cfg import CFG
-from pyformlang.cfg import CFG, Variable, Terminal, Production
+from collections import defaultdict, deque
+from typing import Deque, Dict, List, Set, Tuple
+import networkx
 
 
-def read_grammar_from_file(file_path):
-    with open(file_path, "r") as file:
-        cfg_text = file.read()
-    cfg = CFG.from_text(cfg_text)
-    return cfg
-
-
-def eliminate_epsilon_rules(cfg: CFG) -> CFG:
-    nullable_variables = {
-        var
-        for var in cfg.variables
-        if any(len(prod.body) == 0 for prod in cfg.productions if prod.head == var)
+def cfpq_with_hellings(
+    cfg: pyformlang.cfg.CFG,
+    graph: networkx.DiGraph,
+    start_nodes: Set[int] = None,
+    final_nodes: Set[int] = None,
+) -> set[Tuple[int, int]]:
+    return {
+        (start_node, end_node)
+        for (start_node, variable, end_node) in work_cfpq_with_hellings(cfg, graph)
+        if variable == cfg.start_symbol
+        and (start_nodes is None or start_node in start_nodes)
+        and (final_nodes is None or end_node in final_nodes)
+        and start_node != end_node
     }
-    changed = True
-    while changed:
-        changed = False
-        for production in cfg.productions:
-            if (
-                all(symbol in nullable_variables for symbol in production.body)
-                and production.head not in nullable_variables
-            ):
-                nullable_variables.add(production.head)
-                changed = True
 
-    new_productions = set()
-    for production in cfg.productions:
-        if len(production.body) != 0:
-            new_productions.add(production)
-            for i, symbol in enumerate(production.body):
-                if symbol in nullable_variables:
-                    new_body = list(production.body)
-                    del new_body[i]
-                    if new_body:
-                        new_productions.add(Production(production.head, new_body))
-                    else:
-                        if production.head != cfg.start_symbol:
-                            new_productions.add(Production(production.head, []))
-    return CFG(
-        variables=cfg.variables,
-        terminals=cfg.terminals,
-        start_symbol=cfg.start_symbol,
-        productions=list(new_productions),
+
+def work_cfpq_with_hellings(
+    cfg: pyformlang.cfg.CFG, graph: networkx.DiGraph
+) -> Set[Tuple[int, pyformlang.cfg.Variable, int]]:
+    cfg_in_wnf = cfg_to_weak_normal_form(cfg)
+
+    body_to_head_mapping: Dict[
+        Tuple[pyformlang.cfg.Variable, pyformlang.cfg.Variable],
+        Set[pyformlang.cfg.Variable],
+    ] = defaultdict(set)
+
+    reachability_results: Set[Tuple[int, pyformlang.cfg.Variable, int]] = set()
+
+    start_to_var_finish_mapping: Dict[int, Set[Tuple[pyformlang.cfg.Variable, int]]] = (
+        defaultdict(set)
+    )
+    finish_to_start_var_mapping: Dict[int, Set[Tuple[int, pyformlang.cfg.Variable]]] = (
+        defaultdict(set)
     )
 
+    pending_reachabilities: Deque[Tuple[int, pyformlang.cfg.Variable, int]] = deque()
 
-def eliminate_long_rules(cfg: CFG) -> CFG:
-    new_productions = []
-    for production in cfg.productions:
-        head = production.head
-        body = production.body
-        if len(body) <= 2:
-            new_productions.append(production)
-            continue
-        while len(body) > 2:
-            new_var = Variable(f"Y{len(new_productions)}")
-            new_productions.append(Production(head, [body[0], new_var]))
-            head = new_var
-            body = body[1:]
-        new_productions.append(Production(head, body))
+    def add_reachability(start, variable, finish):
+        reachability = (start, variable, finish)
+        if reachability not in reachability_results:
+            reachability_results.add(reachability)
+            pending_reachabilities.append(reachability)
+            start_to_var_finish_mapping[start].add((variable, finish))
+            finish_to_start_var_mapping[finish].add((start, variable))
 
-    return CFG(
-        variables=cfg.variables,
-        terminals=cfg.terminals,
-        start_symbol=cfg.start_symbol,
-        productions=new_productions,
+    edges_by_label: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    for start, finish, attributes in graph.edges.data():
+        edges_by_label[attributes["label"]].append((start, finish))
+
+    for production in cfg_in_wnf.productions:
+        match production.body:
+            case [] | [pyformlang.cfg.Epsilon()]:
+                for node in graph.nodes:
+                    add_reachability(node, production.head, node)
+            case [pyformlang.cfg.Terminal() as terminal]:
+                for start, finish in edges_by_label[terminal.value]:
+                    add_reachability(start, production.head, finish)
+            case [pyformlang.cfg.Variable() as var1, pyformlang.cfg.Variable() as var2]:
+                body_to_head_mapping[(var1, var2)].add(production.head)
+
+    while pending_reachabilities:
+        (node1, var1, node2) = pending_reachabilities.popleft()
+        for start, variable, finish in [
+            (node0, variable, node2)
+            for (node0, var0) in finish_to_start_var_mapping[node1]
+            for variable in body_to_head_mapping[(var0, var1)]
+        ] + [
+            (node1, variable, node3)
+            for (var2, node3) in start_to_var_finish_mapping[node2]
+            for variable in body_to_head_mapping[(var1, var2)]
+        ]:
+            add_reachability(start, variable, finish)
+    return reachability_results
+
+
+def cfg_to_weak_normal_form(cfg: CFG) -> CFG:
+    cfg_simplified = cfg.eliminate_unit_productions().remove_useless_symbols()
+    single_terminal_productions = (
+        cfg_simplified._get_productions_with_only_single_terminals()
     )
-
-
-def eliminate_chain_rules(cfg: CFG) -> CFG:
-    chain_rules = [
-        (prod.head, prod.body[0])
-        for prod in cfg.productions
-        if len(prod.body) == 1 and isinstance(prod.body[0], Variable)
-    ]
-    direct_chains = {var: {var} for var in cfg.variables}
-    for head, body in chain_rules:
-        direct_chains[head].add(body)
-
-    for var in cfg.variables:
-        for head in list(direct_chains):
-            if var in direct_chains[head]:
-                direct_chains[head] = direct_chains[head].union(direct_chains[var])
-
-    new_productions = [
-        prod
-        for prod in cfg.productions
-        if not (len(prod.body) == 1 and isinstance(prod.body[0], Variable))
-    ]
-    for head, bodies in direct_chains.items():
-        for body in bodies:
-            for prod in cfg.productions:
-                if prod.head == body and prod not in new_productions:
-                    new_productions.append(Production(head, prod.body))
-    return CFG(
-        variables=cfg.variables,
-        terminals=cfg.terminals,
-        start_symbol=cfg.start_symbol,
-        productions=new_productions,
+    decomposed_productions = cfg_simplified._decompose_productions(
+        single_terminal_productions
     )
-
-
-def eliminate_useless_symbols(cfg: CFG) -> CFG:
-    reachable = {cfg.start_symbol}
-    changes = True
-    while changes:
-        changes = False
-        for production in cfg.productions:
-            if production.head in reachable:
-                for symbol in production.body:
-                    if symbol not in reachable:
-                        reachable.add(symbol)
-                        changes = True
-
-    all_symbols = set(cfg.variables).union(cfg.terminals)
-    productive = {sym for sym in all_symbols if isinstance(sym, Terminal)}
-    changes = True
-    while changes:
-        changes = False
-        for production in cfg.productions:
-            if (
-                all(
-                    symbol in productive or symbol in reachable
-                    for symbol in production.body
-                )
-                and production.head not in productive
-            ):
-                productive.add(production.head)
-                changes = True
-
-    useful_symbols = reachable.intersection(productive)
-    new_productions = [
-        prod
-        for prod in cfg.productions
-        if prod.head in useful_symbols
-        and all(sym in useful_symbols for sym in prod.body)
-    ]
-
-    new_variables = {var for var in cfg.variables if var in useful_symbols}
-    new_terminals = {term for term in cfg.terminals if term in useful_symbols}
-
     return CFG(
-        variables=new_variables,
-        terminals=new_terminals,
-        start_symbol=cfg.start_symbol,
-        productions=new_productions,
+        start_symbol=cfg_simplified.start_symbol, productions=decomposed_productions
     )
-
-
-def convert_to_weak_cnf(cfg: CFG) -> CFG:
-    cfg = eliminate_long_rules(cfg)
-    cfg = eliminate_epsilon_rules(cfg)
-    cfg = eliminate_chain_rules(cfg)
-    cfg = eliminate_useless_symbols(cfg)
-    return cfg
