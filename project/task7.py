@@ -43,7 +43,10 @@ def cfpq_with_matrix(
 
                             if len(product.body) == 2:
                                 mat_b, mat_c = product.body
-                                if mat_b in materials[(i, k)] and mat_c in materials[(k, j)]:
+                                if (
+                                    mat_b in materials[(i, k)]
+                                    and mat_c in materials[(k, j)]
+                                ):
                                     if (i, j) not in current_meterial:
                                         current_meterial[(i, j)] = set()
                                     if product.head not in current_meterial[(i, j)]:
