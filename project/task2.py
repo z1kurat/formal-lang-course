@@ -34,4 +34,3 @@ def graph_to_nfa(
     for u, v, label in graph.edges(data="label"):
         nfa.add_transition(u, label, v)
     return nfa
-
