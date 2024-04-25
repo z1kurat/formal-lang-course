@@ -1,6 +1,7 @@
 from typing import Iterable
 from networkx import MultiDiGraph
 from pyformlang.finite_automaton import *
+from pyformlang.rsa import RecursiveAutomaton
 from scipy.sparse import dok_matrix, kron
 from project.task2 import graph_to_nfa, regex_to_dfa
 
@@ -11,7 +12,8 @@ class FiniteAutomaton:
     matrix = None
     nfa = None
     lbl = True
-    states_to_int = None
+    states_to_states = None
+    eps = None
 
     def __init__(
         self,
@@ -21,17 +23,22 @@ class FiniteAutomaton:
         start_states=None,
         final_states=None,
         states_to_int=None,
+        bad=False,
+        eps=None
     ):
         if fa is None:
             self.matrix = matrix
             self.start_states = start_states
             self.final_states = final_states
-            self.states_to_int = states_to_int
+            self.states_to_states = states_to_int
             self.nfa = to_nfa(self)
+            self.eps = eps
+            if not bad:
+                self.nfa = to_nfa(self)
         else:
-            self.states_to_int = {v: i for i, v in enumerate(fa.states)}
+            self.states_to_states = {v: i for i, v in enumerate(fa.states)}
             self.nfa = fa
-            self.matrix = to_mat(fa, self.states_to_int)
+            self.matrix = nfa_to_mat(fa, self.states_to_states)
             self.start_states = fa.start_states
             self.final_states = fa.final_states
 
@@ -42,10 +49,10 @@ class FiniteAutomaton:
         return self.nfa.is_empty()
 
     def size(self):
-        return len(self.states_to_int)
+        return len(self.states_to_states)
 
     def mapping_for(self, u) -> int:
-        return self.states_to_int[State(u)]
+        return self.states_to_states[State(u)]
 
     def start_inds(self):
         return [self.mapping_for(t) for t in self.start_states]
@@ -54,7 +61,7 @@ class FiniteAutomaton:
         return [self.mapping_for(t) for t in self.final_states]
 
     def labels(self):
-        return self.states_to_int.keys() if self.lbl else self.matrix.keys()
+        return self.states_to_states.keys() if self.lbl else self.matrix.keys()
 
 
 def to_set(state):
@@ -63,7 +70,7 @@ def to_set(state):
     return state
 
 
-def to_mat(fa: NondeterministicFiniteAutomaton, states_to_int=None):
+def nfa_to_mat(fa: NondeterministicFiniteAutomaton, states_to_states=None):
     len_states = len(fa.states)
     result = dict()
 
@@ -72,7 +79,7 @@ def to_mat(fa: NondeterministicFiniteAutomaton, states_to_int=None):
         for v, edges in fa.to_dict().items():
             if symbol in edges:
                 for u in to_set(edges[symbol]):
-                    result[symbol][states_to_int[v], states_to_int[u]] = True
+                    result[symbol][states_to_states[v], states_to_states[u]] = True
 
     return result
 
@@ -86,15 +93,15 @@ def to_nfa(fa: FiniteAutomaton):
             for v in range(matrix_size):
                 if fa.matrix[symbol][u, v]:
                     nfa.add_transition(
-                        State(fa.states_to_int[State(u)]),
+                        State(fa.states_to_states[State(u)]),
                         symbol,
-                        State(fa.states_to_int[State(v)]),
+                        State(fa.states_to_states[State(v)]),
                     )
 
     for state in fa.start_states:
-        nfa.add_start_state(State(fa.states_to_int[State(state)]))
+        nfa.add_start_state(State(fa.states_to_states[State(state)]))
     for state in fa.final_states:
-        nfa.add_final_state(State(fa.states_to_int[State(state)]))
+        nfa.add_final_state(State(fa.states_to_states[State(state)]))
 
     return nfa
 
@@ -112,10 +119,10 @@ def intersect_automata(
     for label in labels:
         matrix[label] = kron(fa1.matrix[label], fa2.matrix[label], "csr")
 
-    for u, i in fa1.states_to_int.items():
-        for v, j in fa2.states_to_int.items():
+    for u, i in fa1.states_to_states.items():
+        for v, j in fa2.states_to_states.items():
 
-            k = len(fa2.states_to_int) * i + j
+            k = len(fa2.states_to_states) * i + j
             states_to_int[k] = k
 
             if u in fa1.start_states and v in fa2.start_states:
@@ -130,6 +137,50 @@ def intersect_automata(
         start_states=start_states,
         final_states=final_states,
         states_to_int=states_to_int,
+    )
+
+
+def rsm_to_fa(rsm: RecursiveAutomaton) -> FiniteAutomaton:
+    states = set()
+    start_states = set()
+    final_states = set()
+    epsilons = set()
+
+    for label, enfa in rsm.boxes.items():
+        for state in enfa.dfa.states:
+            s = State((label, state.value))
+            states.add(s)
+            if state in enfa.dfa.start_states:
+                start_states.add(s)
+            if state in enfa.dfa.final_states:
+                final_states.add(s)
+
+    len_states = len(states)
+    states_to_int = {s: i for i, s in enumerate(states)}
+
+    matrix = dict()
+    for label, enfa in rsm.boxes.items():
+        for frm, transition in enfa.dfa.to_dict().items():
+            for symbol, to in transition.items():
+                var = symbol.value
+                if symbol not in matrix:
+                    matrix[var] = dok_matrix((len_states, len_states), dtype=bool)
+                for target in to_set(to):
+                    matrix[var][
+                        states_to_int[State((label, frm.value))],
+                        states_to_int[State((label, target.value))],
+                    ] = True
+                if isinstance(to, Epsilon):
+                    epsilons.add(label)
+
+    return FiniteAutomaton(
+        fa=None,
+        matrix=matrix,
+        start_states=start_states,
+        final_states=final_states,
+        states_to_int=states_to_int,
+        bad=True,
+        eps=epsilons,
     )
 
 
@@ -159,14 +210,14 @@ def paths_ends(
     intersect = intersect_automata(g_f, r_f, lbl=False)
 
     closure = transitive_closure(intersect)
-    r_s = len(r_f.states_to_int)
+    r_s = len(r_f.states_to_states)
     r = list()
     for v, u in zip(*closure.nonzero()):
         if v in intersect.start_states and u in intersect.final_states:
             r.append(
                 (
-                    g_f.states_to_int[v // r_s],
-                    g_f.states_to_int[u // r_s],
+                    g_f.states_to_states[v // r_s],
+                    g_f.states_to_states[u // r_s],
                 )
             )
     return r

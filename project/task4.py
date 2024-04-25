@@ -7,8 +7,8 @@ def reachability_with_constraints(
     inter = intersect_automata(fa, constraints_fa, lbl=False)
     closure = transitive_closure(inter)
 
-    map = {v: i for i, v in fa.states_to_int.items()}
-    con = len(constraints_fa.states_to_int)
+    map = {v: i for i, v in fa.states_to_states.items()}
+    con = len(constraints_fa.states_to_states)
     r = dict()
 
     for start in fa.start_states:
